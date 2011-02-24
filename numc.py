@@ -33,6 +33,7 @@ class ArrayExpression:
 
 #===============================================================================
 class CodeBuilder():
+	""" Centerpiece during generation of C-Code """
 	def __init__(self):
 		self.code = ""
 		self.args = {}
@@ -71,7 +72,7 @@ class CodeBuilder():
 		return(uid)
 		
 	def run(self):
-		self.code = self.code.replace("float64", "double") #TODO: solve generically
+		self.code = self.code.replace("float64", "double") #TODO: solve genericly
 		print "Running:\n"+ self.code
 		#print self.args
 		weave.inline(self.code, self.args.keys(), self.args,
@@ -94,7 +95,27 @@ class UnaryOperation(ArrayExpression):
 		return(uid)
 		
 #===============================================================================
+class BinaryOperation(ArrayExpression):
+	def __init__(self, arg1, arg2):
+		(self.arg1, self.arg2) = (arg1, arg2)
+		if(arg1.dtype != arg2.dtype): raise(Exception("Casting is not supported, yet"))
+		self.dtype = arg1.dtype
+		self.broadcast = Broadcast(self.arg1.shape, self.arg2.shape)
+		self.shape = self.broadcast.shape
+	
+	def build(self, builder, index):
+		index1 = self.broadcast.index1(index)
+		index2 = self.broadcast.index2(index)
+		arg1_uid = builder.build(self.arg1, index1)
+		arg2_uid = builder.build(self.arg2, index2)
+		code = self.__class__.template % (arg1_uid, arg2_uid)
+		uid = builder.uid()
+		builder.writeln("%s %s = %s;"%(self.dtype, uid, code))
+		return(uid)
+
+#===============================================================================
 class Broadcast:
+	""" Takes care of NumPy-broadcasting """
 	def __init__(self, shape1, shape2):
 		s1 = list(shape1)
 		s2 = list(shape2)
@@ -134,26 +155,9 @@ class Broadcast:
 			if(b == 2):
 				del(index[i])
 		return(tuple(index))
-#===============================================================================
-class BinaryOperation(ArrayExpression):
-	def __init__(self, arg1, arg2):
-		(self.arg1, self.arg2) = (arg1, arg2)
-		if(arg1.dtype != arg2.dtype): raise(Exception("Casting is not supported, yet"))
-		self.dtype = arg1.dtype
-		self.broadcast = Broadcast(self.arg1.shape, self.arg2.shape)
-		self.shape = self.broadcast.shape
-	
-	def build(self, builder, index):
-		index1 = self.broadcast.index1(index)
-		index2 = self.broadcast.index2(index)
-		arg1_uid = builder.build(self.arg1, index1)
-		arg2_uid = builder.build(self.arg2, index2)
-		code = self.__class__.template % (arg1_uid, arg2_uid)
-		uid = builder.uid()
-		builder.writeln("%s %s = %s;"%(self.dtype, uid, code))
-		return(uid)
 
 #===============================================================================
+#TODO write more like these
 class add(BinaryOperation):
 	template = "( %s + %s )"
 
@@ -166,6 +170,7 @@ class square(UnaryOperation):
 
 #===============================================================================
 def sum(a, axis=None, dtype=None, out=None):
+	#TODO support axis != None
 	if(isinstance(a, np.ndarray)):
 		print("sum: Is a numpy array - forwarding")
 		return(np.sum(a, axis, dtype, out))
@@ -185,6 +190,7 @@ def sum(a, axis=None, dtype=None, out=None):
 	a_uid = B.build(a, index)
 	B.writeln("%s[0] += %s ;"%(b, a_uid))
 	
+	#debuging	
 	#for (k,i) in enumerate(index):
 	#	B.writeln("std::cout << %s << \": \" << %s << std::endl;"%(k,i))
 	#B.writeln("std::cout <<  %s[0] << std::endl;"%b)
@@ -194,9 +200,5 @@ def sum(a, axis=None, dtype=None, out=None):
 		B.writeln("}")
 	B.run()  #compile and run code
 	return(out)
-
-#===============================================================================
-# Leftovers
-#B.writeln("std::cout << %s << std::endl;"%b)
 
 #EOF
