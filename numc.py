@@ -127,11 +127,12 @@ class Broadcast:
 	def __init__(self, shape1, shape2):
 		s1 = list(shape1)
 		s2 = list(shape2)
+		self.fill = len(s1) - len(s2)
 		
-		if(len(s1) < len(s2)):
-			s1 = [1]*(len(s2) - len(s1)) + s1
-		if(len(s2) < len(s1)):
-			s2 = [1]*(len(s1) - len(s2)) + s2
+		if(self.fill < 0 ):
+			s1 = [1] * abs(self.fill) + s1
+		if(self.fill > 0 ):
+			s2 = [1] * self.fill + s2
 		
 		shape = []
 		self.broadcasted = []
@@ -146,23 +147,22 @@ class Broadcast:
 				shape.append(i)
 				self.broadcasted.append(2) #arg2 broadcasted
 			else:
-				raise(Exception("Could not broadcast"))
-		
+				raise(Exception("Could not broadcast"))	
 		self.shape = tuple(shape)
 
 	def index1(self, index):
-		new_index = []
-		for (i, b) in zip(index, self.broadcasted):
-			if(b != 1):
-				new_index.append(i)
-		return(tuple(new_index))
+		new_index = list( index )
+		for (i, b) in enumerate(self.broadcasted):
+			if(b == 1): new_index[i]="0"
+		fill = abs(min(self.fill, 0))
+		return( tuple(new_index[fill:]) )
 	
-	def index2(self, index):
-		new_index = []
-		for (i, b) in zip(index, self.broadcasted):
-			if(b != 2):
-				new_index.append(i)
-		return(tuple(new_index))
+	def index2(self, index):	
+		new_index = list( index )
+		for (i, b) in enumerate(self.broadcasted):
+			if(b == 2): new_index[i]="0"
+		fill = max(self.fill, 0)
+		return( tuple(new_index[fill:]) )
 	
 #===============================================================================
 #TODO write more like these
@@ -179,8 +179,8 @@ class square(UnaryOperation):
 #===============================================================================
 def sum(a, axis=None, dtype=None, out=None):
 	#TODO support axis != None
-	if(isinstance(a, np.ndarray)):
-		print("sum: Is a numpy array - forwarding")
+	if(not isinstance(a, ArrayExpression)):
+		print("sum: Not an ArrayExpression - forwarding to NumPy")
 		return(np.sum(a, axis, dtype, out))
 	if(not dtype): dtype = a.dtype
 	out_shape = (1)
