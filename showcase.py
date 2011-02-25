@@ -2,18 +2,21 @@
 
 def main():
 	import numc as np
-	
-	a = np.random.rand(2, 3, 1, 5) #TODO: make it work
-	
-	#a = np.random.rand(2, 3, 4, 5)
+	a = np.random.rand(2, 3, 1, 5)
 	b = np.random.rand(4, 5)
-	
-	c = np.sum(np.sin(a) + np.square(b))
-	print "NumC: %s"%c
+		
+	print "=== NumC ==="
+	test(np, a, b)
 	
 	import numpy as np
-	c = np.sum(np.sin(a) + np.square(b))
-	print "NumPy: %s"%c
+	print("\n=== NumPy ===")
+	test(np, a, b)
+
+
+def test(np, a, b):
+	x = np.sum(np.sin(a) + np.square(b))
+	print x
+	print np.mean(np.square(b))
 	
 if(__name__ == "__main__"):
 	main()

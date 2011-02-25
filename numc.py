@@ -4,7 +4,7 @@ import sys
 
 #===============================================================================
 # Hack: Everything which we do not implement on our own gets forward to numpy.
-# TODO: also enable "from numpyng import *" 
+# TODO: also enable "from numc import *" 
 class ModuleWrapper:
 	def __init__(self, inner_module):
 		self.inner_module = inner_module
@@ -21,15 +21,31 @@ sys.modules[__name__] = ModuleWrapper(sys.modules[__name__])
 #===============================================================================
 class ArrayExpression:
 	""" The Base-Class """
+	
 	def __add__(self, other):
 		return(add(self, other))
 	#TODO: also implement all other special functions like __sub__, __not__,...
 	
+	@property
+	def __array_interface__(self):
+		if(not hasattr(self, "result")):
+			self.evaluate()
+		return(self.result.__array_interface__)
+		 
+	def evaluate(self):
+		""" Evaluate itself for all indices. Results are accessable via __array_interface__ """
+		#print("evaluating")
+		out = np.empty(self.shape, self.dtype)
+		builder = CodeBuilder()
+		index = builder.loop(self)
+		builder.writeln("{")
+		a_uid = self.build(builder, index)
+		ArrayWrapper(out).build_inline(builder, index)
+		builder.writeln("= %s;"%a_uid)
+		builder.writeln("}")
+		builder.run()  #compile and run code
+		self.result = out
 	
-	def materialize(self):
-		""" Should evaluate self for all indices. Results are provided via __array_interface__ """  
-		pass #TODO
-
 
 #===============================================================================
 class CodeBuilder():
@@ -55,10 +71,19 @@ class CodeBuilder():
 
 	def writeln(self, code):
 		self.write(code+"\n")
-		
+
+	def loop(self, arg):
+		index = []
+		for N in arg.shape:
+			n = self.add_arg(N) #length of loop
+			i = self.uid()  #loop-variable
+			index.append(i)
+			self.writeln("for (int %s=0; %s<%s; %s++) "%(i,i,n,i))
+		return(index)
+	
 	def run(self):
 		self.code = self.code.replace("float64", "double") #TODO: solve genericly
-		print "Running:\n"+ self.code
+		#print "Running:\n"+ self.code
 		#print self.args
 		weave.inline(self.code, self.args.keys(), self.args,
 				force=False, verbose=2)
@@ -72,15 +97,19 @@ class ArrayWrapper:
 		self.array = array
 		self.shape = array.shape
 		self.dtype = array.dtype
-		
-	def build(self, builder, index):
-		#TODO: support non-continuous arrays
+	
+	def build_inline(self, builder, index):
 		arg_uid = builder.add_arg(self.array)
-		uid = builder.uid()
 		index_code = index[0]
 		for (s,i) in zip(self.shape, index)[1:]:
 			index_code = "( %s ) * %s + %s"%(index_code, s, i)
-		builder.writeln("%s %s = %s[%s];"%(self.dtype, uid, arg_uid, index_code))
+		builder.write("%s[%s]"%(arg_uid, index_code))
+	
+	def build(self, builder, index):
+		uid = builder.uid()
+		builder.write("%s %s = "%(self.dtype, uid))
+		self.build_inline(builder, index)
+		builder.writeln(";")
 		return(uid)
 	
 
@@ -125,15 +154,9 @@ class BinaryOperation(ArrayExpression):
 class Broadcast:
 	""" Takes care of NumPy-broadcasting """
 	def __init__(self, shape1, shape2):
-		s1 = list(shape1)
-		s2 = list(shape2)
-		self.fill = len(s1) - len(s2)
-		
-		if(self.fill < 0 ):
-			s1 = [1] * abs(self.fill) + s1
-		if(self.fill > 0 ):
-			s2 = [1] * self.fill + s2
-		
+		self.fill = len(shape1) - len(shape2)
+		s1 = [1] * max(0, -1*self.fill) + list(shape1)
+		s2 = [1] * max(0, self.fill) + list(shape2)
 		shape = []
 		self.broadcasted = []
 		for (i,j) in zip(s1,s2):
@@ -188,24 +211,16 @@ def sum(a, axis=None, dtype=None, out=None):
 	out[0] = 0.0
 	B = CodeBuilder()
 	b = B.add_arg(out) # output-array
-	index = []
-	for N in a.shape:
-		n = B.add_arg(N) #length of loop
-		i = B.uid()  #loop-variable
-		index.append(i)
-		B.writeln("for (int %s=0; %s<%s; %s++)  {"%(i,i,n,i))
-
+	index = B.loop(a)
+	B.writeln("{")
 	a_uid = a.build(B, index)
-	B.writeln("%s[0] += %s ;"%(b, a_uid))
-	
+	B.writeln("%s[0] += %s;"%(b, a_uid))
 	#debuging	
 	#for (k,i) in enumerate(index):
 	#	B.writeln("std::cout << %s << \": \" << %s << std::endl;"%(k,i))
 	#B.writeln("std::cout <<  %s[0] << std::endl;"%b)
 	#B.writeln("std::cout <<  std::endl;")
-	
-	for N in a.shape:
-		B.writeln("}")
+	B.writeln("}")
 	B.run()  #compile and run code
 	return(out)
 
