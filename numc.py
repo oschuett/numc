@@ -62,10 +62,15 @@ class CodeBuilder():
 			uid = array.build(self, index)
 			
 		elif(isinstance(array, np.ndarray)):
+			#TODO: find a better place for this code
+			#TODO: support non continuous arrays
+			#TODO: support any thing that porvides __array_interface__
 			arg_uid = self.add_arg(array)
 			uid = self.uid()
-			index_code = " + ".join(["%d * %s"%t for t in zip(array.shape, index)][:-1])
-			index_code += " + %s"%index[-1]
+			index_code = index[0]
+			#index_code = "0"
+			for (s,i) in zip(array.shape, index)[1:]:
+				index_code = "( %s ) * %s + %s"%(index_code, s, i)
 			self.writeln("%s %s = %s[%s];"%(array.dtype, uid, arg_uid, index_code))
 		else:
 			raise(Exception("Unkown type: %s"%array))
@@ -143,19 +148,19 @@ class Broadcast:
 		self.shape = tuple(shape)
 
 	def index1(self, index):
-		index = list(index)
-		for (i, b) in enumerate(self.broadcasted):
-			if(b == 1):
-				del(index[i])
-		return(tuple(index))
+		new_index = []
+		for (i, b) in zip(index, self.broadcasted):
+			if(b != 1):
+				new_index.append(i)
+		return(tuple(new_index))
 	
 	def index2(self, index):
-		index = list(index)
-		for (i, b) in enumerate(self.broadcasted):
-			if(b == 2):
-				del(index[i])
-		return(tuple(index))
-
+		new_index = []
+		for (i, b) in zip(index, self.broadcasted):
+			if(b != 2):
+				new_index.append(i)
+		return(tuple(new_index))
+	
 #===============================================================================
 #TODO write more like these
 class add(BinaryOperation):

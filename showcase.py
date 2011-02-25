@@ -2,17 +2,15 @@
 
 def main():
 	import numc as np
-	a = np.ones((5))
-	b = np.ones((3,5))
+	a = np.random.rand(3, 4, 5)
+	b = np.random.rand(5)
+	
 	c = np.sum(np.sin(a) + np.square(b))
 	print "NumC: %s"%c
 	
 	import numpy as np
-	a = np.ones((5))
-	b = np.ones((3,5))
 	c = np.sum(np.sin(a) + np.square(b))
 	print "NumPy: %s"%c
-	
 	
 if(__name__ == "__main__"):
 	main()
