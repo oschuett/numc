@@ -55,26 +55,6 @@ class CodeBuilder():
 
 	def writeln(self, code):
 		self.write(code+"\n")
-	
-	def build(self, array, index):
-		""" If array is a numpy.ndarray, its code gets build here. """
-		if(isinstance(array, ArrayExpression)):
-			uid = array.build(self, index)
-			
-		elif(isinstance(array, np.ndarray)):
-			#TODO: find a better place for this code
-			#TODO: support non continuous arrays
-			#TODO: support any thing that porvides __array_interface__
-			arg_uid = self.add_arg(array)
-			uid = self.uid()
-			index_code = index[0]
-			#index_code = "0"
-			for (s,i) in zip(array.shape, index)[1:]:
-				index_code = "( %s ) * %s + %s"%(index_code, s, i)
-			self.writeln("%s %s = %s[%s];"%(array.dtype, uid, arg_uid, index_code))
-		else:
-			raise(Exception("Unkown type: %s"%array))
-		return(uid)
 		
 	def run(self):
 		self.code = self.code.replace("float64", "double") #TODO: solve genericly
@@ -84,16 +64,37 @@ class CodeBuilder():
 				force=False, verbose=2)
 					#type_converters=weave.converters.blitz, compiler = 'gcc', verbose=2)
 
+#===============================================================================
+class ArrayWrapper:
+	""" Wrapper to handle e.g. numpy.ndarray objects transparently. """
+	#TODO: support any thing that porvides __array_interface__
+	def __init__(self, array):
+		self.array = array
+		self.shape = array.shape
+		self.dtype = array.dtype
+		
+	def build(self, builder, index):
+		#TODO: support non-continuous arrays
+		arg_uid = builder.add_arg(self.array)
+		uid = builder.uid()
+		index_code = index[0]
+		for (s,i) in zip(self.shape, index)[1:]:
+			index_code = "( %s ) * %s + %s"%(index_code, s, i)
+		builder.writeln("%s %s = %s[%s];"%(self.dtype, uid, arg_uid, index_code))
+		return(uid)
+	
 
 #===============================================================================
 class UnaryOperation(ArrayExpression):
 	def __init__(self, arg):
+		if(not isinstance(arg, ArrayExpression)):  arg = ArrayWrapper(arg)
 		self.arg = arg
 		self.shape = arg.shape
 		self.dtype = arg.dtype
-	
+		
+		
 	def build(self, builder, index):
-		arg_uid = builder.build(self.arg, index)
+		arg_uid = self.arg.build(builder, index)
 		code = self.__class__.template % (arg_uid)
 		uid = builder.uid()
 		builder.writeln("%s %s = %s;"%(self.dtype, uid, code))
@@ -102,6 +103,8 @@ class UnaryOperation(ArrayExpression):
 #===============================================================================
 class BinaryOperation(ArrayExpression):
 	def __init__(self, arg1, arg2):
+		if(not isinstance(arg1, ArrayExpression)):  arg1 = ArrayWrapper(arg1)		
+		if(not isinstance(arg2, ArrayExpression)):  arg2 = ArrayWrapper(arg2)
 		(self.arg1, self.arg2) = (arg1, arg2)
 		if(arg1.dtype != arg2.dtype): raise(Exception("Casting is not supported, yet"))
 		self.dtype = arg1.dtype
@@ -111,8 +114,8 @@ class BinaryOperation(ArrayExpression):
 	def build(self, builder, index):
 		index1 = self.broadcast.index1(index)
 		index2 = self.broadcast.index2(index)
-		arg1_uid = builder.build(self.arg1, index1)
-		arg2_uid = builder.build(self.arg2, index2)
+		arg1_uid = self.arg1.build(builder, index1)
+		arg2_uid = self.arg2.build(builder, index2)
 		code = self.__class__.template % (arg1_uid, arg2_uid)
 		uid = builder.uid()
 		builder.writeln("%s %s = %s;"%(self.dtype, uid, code))
@@ -192,7 +195,7 @@ def sum(a, axis=None, dtype=None, out=None):
 		index.append(i)
 		B.writeln("for (int %s=0; %s<%s; %s++)  {"%(i,i,n,i))
 
-	a_uid = B.build(a, index)
+	a_uid = a.build(B, index)
 	B.writeln("%s[0] += %s ;"%(b, a_uid))
 	
 	#debuging	
