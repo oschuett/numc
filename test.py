@@ -3,8 +3,9 @@
 import numpy
 import numc
 
-	
-def main():
+#numc.set_debug(2)
+
+def main():	
 	for (k,v) in globals().items():
 		if(not k.startswith("test_")): continue
 		print("================= Test: %s ==================="%k)
@@ -13,13 +14,30 @@ def main():
 		#for r in results2:
 		#	print r
 		#	r.evaluate()
+		failed = False
 		for (r1, r2) in zip(results1, results2):
-			print("Numpy-Result: %s"%r1)
-			print("Numc-Result: %s"%r2)
-			assert(r1.shape == r2.shape)
-			assert(r1.dtype == r2.dtype)
-			diff = numpy.max(numpy.abs(r1-r2))
-			assert(diff < 1e-15)
+			if(r1.shape != r2.shape): failed=True
+			if(r1.dtype != r2.dtype): failed=True
+ 				
+			if(not failed and r1.size > 0):
+				diff = numpy.max(numpy.abs(r1-r2))
+				if(diff > 1e-15): failed=True
+					
+			if(failed):
+				print("Numpy-Result-Shape: %s"%str(r1.shape))
+				print("Numc-Result-Shape: %s"%str(r2.shape))
+				print("Numpy-Result: %s"%r1)
+				print("Numc-Result: %s"%r2)
+				r2.__array_interface__
+				print("Numc-Result(evaluated): %s"%r2)
+				print("Diff: %e"%diff)
+				raise(Exception("%s failed"%k))
+		if(not failed):
+			print("passed :-)")
+
+def test_sliece(np):
+	a = np.reshape(np.arange(1000), (10,10,10))
+	return(a[1], a[-1:2:3,None,5], a[-1:2:3,np.newaxis,5] , a[-4], a[...,1], a[...,1,...,None,2], )
 
 def test0_view(np):
 	x = np.arange(5)
@@ -35,8 +53,6 @@ def test_modifiy(np):
 
 def test_modifiy2(np):
 	a = np.zeros(5)
-	print a
-	print type(a)
 	b = np.sin(a)
 	a[2] = 123
 	return (a, np.sum(b))
@@ -64,7 +80,7 @@ def test_sum2(np):
 
 def test_mean(np):
 	#a = np.reshape(np.arange(1800), (2,4,5,3,5,3))
-	a = np.reshape(np.arange(40), (2,4,5))
+	a = np.reshape(np.arange(32), (2,2,2,2,2))
 	return( np.mean(np.sin(a)), )
 
 def test0_mean_with_casting(np):

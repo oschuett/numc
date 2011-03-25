@@ -3,6 +3,10 @@ import sys
 import itertools
 import numpy
 import traceback
+from time import time #TODO remove
+import __builtin__
+
+#import math
 #===============================================================================
 # Idea: generate and compile also similar code-snippets for future use
 
@@ -20,6 +24,12 @@ import traceback
 	# return(something)
 # 
 #===============================================================================
+
+DEBUG = 0
+
+def set_debug(d):
+	global DEBUG
+	DEBUG = d
 
 class ModuleWrapper:
 	def __init__(self, inner_module):
@@ -41,14 +51,15 @@ class AssimilateDecorator:
 		result = self.inner_func(*args, **kwargs)
 		#TODO result might be iterable
 		if(isinstance(result, numpy.ndarray)):
-			result = ndarray(NumpyArray(result))
+			result = NumpyArray(result)
+			#result = ndarray(NumpyArray(result))
 		return result
 
 
-
+#TODO: for testing: lets do everything on our own
 sys.modules[__name__] = ModuleWrapper(sys.modules[__name__])
 
-			
+
 #===============================================================================
 def assimilate(something):
 	""" converts something somehow to an ArrayExpression """
@@ -61,33 +72,43 @@ def assimilate(something):
 	#	return(something)
 	if(not isinstance(something, numpy.ndarray)):
 		something = numpy.array(something)
-	return( ndarray(NumpyArray(something)) )
+	return( NumpyArray(something) )
+		#return( ndarray(NumpyArray(something)) )
 
 #===============================================================================
 class ArraySource(object):
 	""" The Base-Class """
-	pass
-
-
-#===============================================================================
-class ArrayExpression(ArraySource):
 	def __new__(cls, *args, **kwargs):
 		#print("__new__ called: "+cls.__name__)
 		new_obj = object.__new__(cls)
 		cls.__init__(new_obj, *args, **kwargs)
 		return ndarray(new_obj)
 	
+	def build_shape(self, builder):
+		return [builder.add_arg(n) for n in self.shape]
+	 	
+		# assert(False)
+		# foo = [builder.add_arg(n) for n in self.shape]
+		# foo2 = []
+		# for x in foo:
+			# foo2.append( x +"c" )
+			# builder.writeln("const int %sc = %s;"%(x, x))
+			# 
+		# return(foo2)
+		# #return [builder.add_arg(n) for n in self.shape]
+#===============================================================================
+class ArrayExpression(ArraySource):
+	
 		
 	def evaluate(self):
 		""" Evaluate itself for all indices. Results are accessable via __array_interface__ """
-		print("evaluating: %s"%self)
+		if(DEBUG): print("evaluating: %s"%str(self))
+		out = empty(self.shape, self.dtype)
 		B = CodeBuilder()
 		index = B.loop(self)
 		B.writeln("{")
-		a_uid = self.build(B, index)
-		out = empty(self.shape, self.dtype)
-		out_uid = out.src.build(B, index)
-		B.writeln("%s = %s;"%(out_uid, a_uid))
+		a_uid = self.build_get(B, index)
+		out.src.build_set(B, index, a_uid)
 		B.writeln("}")
 		B.run()  #compile and run code
 		return( out )
@@ -100,6 +121,7 @@ class ndarray(object):
 		self.src = source
 	
 	def copy(self):
+		# the actual copy is done later, either by __array_interface__ or __setitem__
 		return( ndarray(self.src) )
 	
 	@property
@@ -115,51 +137,85 @@ class ndarray(object):
 	@property
 	def size(self):
 		#reduce(operator.mul, self.shape)
-		return( numpy.prod(self.shape) )
+		#TODO: make better
+		return( int(numpy.prod(self.shape)) )
 	
 	
 	def __add__(self, other): return( add(self, other) )
 	def __sub__(self, other): return( sub(self, other) )
 	def __div__(self, other): return( div(self, other) )
+	def __mul__(self, other): return( mul(self, other) )
 	
+	#def flaten(self): return( ravel(self.copy()) )
+	@property
+	def flat(self): return( ravel(self) )
+		
 	
 	def __getitem__(self, slices):
-		print "__getitem__(%s) called"%str(slices)
-		return( Slice(self, slices) )
+		if(DEBUG):	print "__getitem__(%s) called"%str(slices)
+		return( Slicing(self, slices) )
 		
 		
 	def __setitem__(self, key, value):
-		print "__setitem__(%s, %s) called"%(key, value)
+		if(DEBUG): print "__setitem__(%s, %s) called"%(key, value)
+		value = assimilate(value)
 		if(not isinstance(self.src, NumpyArray)):
 			self.src = self.src.evaluate().src
-		#print("Refcount: %d"%sys.getrefcount(self.src))
+			
+		#now self.src is a NumpyArray for sure !
+		
 		if(sys.getrefcount(self.src) > 2): #one for self.src and one for getrefcount()
-			print "Makeing a copy!!!!!!!!!"
-			self.src = NumpyArray(self.src.array.copy())
-		self.src.array.__setitem__(key, value)
+			#print "Makeing a copy!!!!!!!!!"
+			t1 = time()
+			self.src = NumpyArray(self.src.array.copy()).src
+			t2 = time()
+			print "Made a Copy it took: "+str(t2-t1)
+		
+		#print("running setitem")
+		out = Slicing(self, key)
+		B = CodeBuilder()
+		index = B.loop(out)
+		B.writeln("{")
+		a_uid = value.src.build_get(B, index)
+		out.src.build_set(B, index, a_uid)
+		B.writeln("}")
+		B.run()  #compile and run code
+		
+
+		#t1 = time()
+		#self.src.array.__setitem__(key, value)
+		#t2 = time()
+		#print "__setitem__ took: "+str(t2-t1)
 	
 	
 		
-	@property
-	def __array_interface__(self):
+		
+	def __str__(self):
+	 	return(str(self.src))
+
+	#def __getattr__(self, key):
+	#	print("get attr:"+key)
+	#	raise(AttributeError)
+	
+	def get_array(self):
 		try:
-			# also called when ndarray gets passed to numpy-functions 
-			#traceback.print_stack()
-			#TODO is this a possible write-access?
-			#print("Array interface called: %s"%self)
-			#print("Array interface called")
 			if(not isinstance(self.src, NumpyArray)):
 				self.src = self.src.evaluate().src
-				#print("Refcount: %d"%sys.getrefcount(self.src))
-			return(self.src.array.__array_interface__)
 		except:
-			print("!!!!!!!!!! An exception in __array_interface__ occured !!!!!!!!!!!!!")
+			print("!!!!!!!!!! An exception in mk_array occured !!!!!!!!!!!!!")
 			traceback.print_exc()
+		return(self.src.array)
 	
-	def __str__(self):
-		return(str(self.src))
-
-
+	@property
+	def __array_interface__(self): return self.get_array().__array_interface__ 
+	
+	
+	def __lt__(self, other): raise(NotImplementedError)	
+	def __le__(self, other): raise(NotImplementedError)
+	def __eq__(self, other): raise(NotImplementedError)
+	def __ne__(self, other): raise(NotImplementedError)
+	def __gt__(self, other): return self.get_array().__gt__(other)
+	def __ge__(self, other): raise(NotImplementedError)
 #===============================================================================
 class NumpyArray(ArraySource):
 	""" Wrapper to handle e.g. numpy.ndarray objects transparently. """
@@ -169,31 +225,44 @@ class NumpyArray(ArraySource):
 		self.array = array
 		self.shape = array.shape
 		self.dtype = array.dtype 
+	
+	def build_get(self, builder, index):
+		tmp_uid = builder.uid("tmp")
+		elem = self.mk_element(builder, index)
+		builder.writeln("%s %s = %s;"%(self.dtype, tmp_uid, elem))
+		return(tmp_uid)
+	
+	def build_set(self, builder, index, value):
+		elem = self.mk_element(builder, index)
+		builder.writeln("%s = %s;"%(elem, value))
 		
-	def build(self, builder, index):
+	def mk_element(self, builder, index):
 		arg_uid = self._add2builder(builder)
 		if(len(index) == 0):
 			return("*"+arg_uid)
-		index_code = index[0]
-		for (n,i) in enumerate(index[1:]):
-			index_code = "( %s ) * %s_shape_%d + %s"%(index_code, arg_uid, n+1, i)
-		return("%s[%s]"%(arg_uid, index_code))
+		index_list = ["S%s[%d]*(%s)"%( arg_uid, n, i) for (n,i) in enumerate(index)]
+		index_code = " + ".join(index_list) 	
+		#weave.inline casted arg allready to dtype but strides are in byte
+		#return("%s[(%s)/sizeof(%s)]"%(arg_uid, index_code, self.dtype))
+		return("*((%s*)(((char*)%s)+(%s)))"%(self.dtype, arg_uid, index_code))
 
 	def build_shape(self, builder): #TODO: improve
 		self_uid = self._add2builder(builder)
-		return [self_uid+"_shape_"+str(i) for i in range(len(self.shape))]
+		return ["N%s[%d]"%(self_uid,i) for i in range(len(self.shape))]
 	
 	def _add2builder(self, builder):
 		if(id(self) not in builder.cache.keys()):
 			self_uid = builder.add_arg(self.array)
-			for (i,n) in enumerate(self.array.shape):
-				builder.add_arg(n, self_uid+"_shape_"+str(i))
+			#for (i,n) in enumerate(self.array.shape):
+			#	builder.add_arg(n, self_uid+"_shape_"+str(i))
 			builder.cache[id(self)] = self_uid
 		return( builder.cache[id(self)] )
 	
 	def __str__(self):
-		return(str(self.array))
-		#return("NumpyArray%s"%str(self.array.shape))
+		if(len(self.shape) == 0):
+			return( str(self.array) )
+		#return(str(self.array))
+		return("NumpyArray(shape=%s)"%str(self.array.shape))
 
 #===============================================================================
 class CodeBuilder():
@@ -203,6 +272,10 @@ class CodeBuilder():
 		self.args = {}
 		self.uids = set()
 		self.cache = {}
+	
+	#def insert(self, arg, index):
+	#	#TODO: check cache - if elements is allready there - maybe we need contexts 
+	#	return arg.build(self, index)
 		
 	def uid(self, name="uid"):
 		""" generate a new, unique identifier """
@@ -231,30 +304,41 @@ class CodeBuilder():
 
 	def loop(self, arg):
 		index = []
-		for n in arg.build_shape(self):
-			#n = self.add_arg(N, "N") #length of loop
-			i = self.uid("i")  #loop-variable
-			index.append(i)
-			self.writeln("for (int %s=0; %s<%s; %s++) "%(i,i,n,i))
-		return(index)
+		#for n in arg.build_shape(self):
+		for N in arg.shape:
+			if(N == 1):
+				index.append(0)
+			else:
+				n = self.add_arg(int(N), "N") #length of loop
+				i = self.uid("i")  #loop-variable
+				index.append(i)
+				self.writeln("for (int %s=0; %s<%s; %s++) "%(i,i,n,i))
+			
+		return(tuple(index))
 	
 	def run(self):
 		self.code = self.code.replace("float", "float64") #TODO: solve genericly
 		self.code = self.code.replace("float64", "double") #TODO: solve genericly
 		self.code = self.code.replace("double64", "double") #TODO: solve genericly
 		self.code = self.code.replace("int32", "int") #TODO: solve genericly
-		verbose = 2
-		#verbose = 0
-		print("Running C-Code...")
-		if(verbose > 0):
+		
+		#print("Running C-Code...")
+		if(DEBUG):
 			print "Running:\n"+ self.code
-			print self.args.keys()
-		weave.inline(self.code, self.args.keys(), self.args,
-				force=False, verbose=verbose)
+			for (k,v) in self.args.items():
+				if(isinstance(v, int)):
+					print "%s ->  %s"%(k,v)
+			
+			#print self.args.keys()
+		t1 = time()
+		weave.inline(self.code, self.args.keys(), self.args, verbose=DEBUG,
+			extra_compile_args=["-O3"], )
+				#force=False, verbose=DEBUG) 
 					#type_converters=weave.converters.blitz, compiler = 'gcc', verbose=2)
 
-
-	
+		t2 = time()
+		print "C-Run took: "+str(t2-t1) 
+		
 #===============================================================================
 class Broadcast:
 	""" Takes care of NumPy-broadcasting """
@@ -296,19 +380,6 @@ class Broadcast:
 
 
 
-#===============================================================================
-#TODO: evtl via Metaclass
-def HandlefyDecorator(inner_func):
-	def deco_func(*args, **kwargs):
-		result = inner_func(*args, **kwargs)
-		#TODO: result could be iterable
-		if(isinstance(result, numpy.ndarray)):
-			result = NumpyArray(result)
-		if(isinstance(result, ArraySource)):
-			result = ndarray(result)
-		return(result)
-	
-	return(deco_func)
 
 #===============================================================================
 class UnaryOperation(ArrayExpression):
@@ -322,8 +393,8 @@ class UnaryOperation(ArrayExpression):
 		else:
 			self.dtype = self.arg.dtype
 		
-	def build(self, builder, index):
-		arg_uid = self.arg.src.build(builder, index)
+	def build_get(self, builder, index):
+		arg_uid = self.arg.src.build_get(builder, index)
 		code = self.ufunc.template % {"arg":arg_uid}
 		uid = builder.uid("tmp")
 		builder.writeln("%s %s = %s;"%(self.dtype, uid, code))
@@ -347,21 +418,18 @@ class BinaryOperation(ArrayExpression):
 		self.shape = self.broadcast.shape
 		
 
-	def build(self, builder, index):
+	def build_get(self, builder, index):
 		index1 = self.broadcast.index1(index)
 		index2 = self.broadcast.index2(index)
-		print type(self)
-		print type(self.arg1)
-		print type(self.arg1.src)
-		arg1_uid = self.arg1.src.build(builder, index1)
-		arg2_uid = self.arg2.src.build(builder, index2)
+		#print type(self)
+		#print type(self.arg1)
+		#print type(self.arg1.src)
+		arg1_uid = self.arg1.src.build_get(builder, index1)
+		arg2_uid = self.arg2.src.build_get(builder, index2)
 		code = self.ufunc.template % {"arg1":arg1_uid, "arg2":arg2_uid}
 		uid = builder.uid()
 		builder.writeln("%s %s = %s;"%(self.dtype, uid, code))
 		return(uid)
-	
-	def build_shape(self, builder): #TODO: improve
-		return [builder.add_arg(n) for n in self.shape]
 	
 	def __str__(self):
 		return(self.ufunc.template%{"arg1":str(self.arg1), "arg2":str(self.arg2)})
@@ -378,6 +446,41 @@ class UnaryUfunc(ufunc):
 		return(UnaryOperation(self, arg))
 
 #===============================================================================
+class ReduceUfunc(ArrayExpression):
+	def __init__(self, ufunc, arg, axis=0, dtype=None, out=None):
+		assert(dtype==None) #not implemented, yet
+		assert(out==None) #not implemented, yet
+		self.ufunc = ufunc
+		self.arg = assimilate(arg)
+		self.axis = axis
+		self.dtype = self.arg.dtype
+		self.shape = self.arg.shape[:axis] + self.arg.shape[axis+1:] 
+	
+	
+	def build_get(self, builder, index):
+		#init
+		builder.writeln("//init")
+		init_uid = self.arg.src.build_get(builder, index[:self.axis]+("0",)+index[self.axis:])
+		out_uid = builder.uid("out")  #loop-variable
+		builder.writeln("%s %s = %s;"%(self.dtype, out_uid, init_uid))
+		builder.writeln("//loop")
+		n = builder.add_arg(self.arg.shape[self.axis], "N") #length of loop
+		i = builder.uid("i")  #loop-variable
+		builder.writeln("for (int %s=1; %s<%s; %s++) "%(i,i,n,i)) #begining at 1
+		builder.writeln("{")
+		a_uid = self.arg.src.build_get(builder, index[:self.axis]+(i,)+index[self.axis:])
+		builder.write(out_uid+" = ")
+		builder.write(self.ufunc.template%{"arg1":out_uid, "arg2":a_uid})
+		builder.writeln(";")
+		builder.writeln("}")
+		return(out_uid)
+
+		
+		
+	def __str__(self):
+		return("Reduce(%s)"%str(self.arg))
+	
+#===============================================================================
 class BinaryUfunc(ufunc):
 	def __init__(self, template):
 		self.template = template
@@ -385,67 +488,131 @@ class BinaryUfunc(ufunc):
 	def __call__(self, arg1, arg2):
 		return(BinaryOperation(self, arg1, arg2))
 		
-	
 	def reduce(self, a, axis=0, dtype=None, out=None):
-		if(not isinstance(a, ndarray)):
-			raise(Exception("not an ndarray - should forward to NumPy - not yet Implemented."))
-			#print("reduce: Not an ArrayExpression - forwarding to NumPy")
-			#return(numpy.sum(a, axis, dtype, out))
-		if(not dtype): dtype = a.dtype
+		return(ReduceUfunc(self, a, axis, dtype, out))
 		
-		out_shape = a.shape[:axis] + a.shape[axis+1:] 
-			
-		if(out):
-			assert(out.shape == out_shape)
-			assert(out.dtype == dtype) #TODO:sure?
-			out[:] = 0.0 
-		else:
-			out = zeros(out_shape, dtype)
-		#print "out: %s"%type(out)
-		#print "out: %s"%repr(out)
-		B = CodeBuilder()
-		index = B.loop(a.src)
-		#print index
-		B.writeln("{")
-		
-		out_uid = out.src.build(B, index[:axis]+index[axis+1:])
-		tmp_uid = B.uid("tmp")
-		a_uid = a.src.build(B, index)
-		B.writeln("%s %s = %s;"%(a.dtype, tmp_uid,a_uid))
-		B.write(out_uid+" = ")
-		B.write(self.template%{"arg1":out_uid, "arg2":tmp_uid})
-		B.writeln(";")
-		
-		B.writeln("}")
-		B.run()  #compile and run code
-		return(out)
-
-add = BinaryUfunc("( %(arg1)s + %(arg2)s )")
-sub = BinaryUfunc("( %(arg1)s - %(arg2)s )")
-div = BinaryUfunc("( %(arg1)s / %(arg2)s )")
-sin = UnaryUfunc("sin(%(arg)s)", numpy.dtype(numpy.float64))
-square = UnaryUfunc("( %(arg)s * %(arg)s)")
-
+	# def reduce2(self, a, axis=0, dtype=None, out=None):
+		# if(not isinstance(a, ndarray)):
+			# raise(Exception("not an ndarray - should forward to NumPy - not yet Implemented."))
+			# #print("reduce: Not an ArrayExpression - forwarding to NumPy")
+			# #return(numpy.sum(a, axis, dtype, out))
+		# if(not dtype): dtype = a.dtype
+		# 
+		# out_shape = a.shape[:axis] + a.shape[axis+1:] 
+			# 
+		# if(out):
+			# assert(out.shape == out_shape)
+			# assert(out.dtype == dtype) #TODO:sure?
+			# out[:] = 0.0 
+		# else:
+			# out = zeros(out_shape, dtype)
+		# #print "out: %s"%type(out)
+		# #print "out: %s"%repr(out)
+		# B = CodeBuilder()
+		# index = B.loop(a.src)
+		# #print index
+		# B.writeln("{")
+		# 
+		# out_uid = out.src.build(B, index[:axis]+index[axis+1:])
+		# tmp_uid = B.uid("tmp")
+		# a_uid = a.src.build(B, index)
+		# B.writeln("%s %s = %s;"%(a.dtype, tmp_uid,a_uid))
+		# B.write(out_uid+" = ")
+		# B.write(self.template%{"arg1":out_uid, "arg2":tmp_uid})
+		# B.writeln(";")
+		# 
+		# B.writeln("}")
+		# B.run()  #compile and run code
+		# return(out)
 
 #===============================================================================
-class Slice(ArrayExpression):
+add = BinaryUfunc("(%(arg1)s + %(arg2)s)")
+sub = BinaryUfunc("(%(arg1)s - %(arg2)s)")
+div = BinaryUfunc("(%(arg1)s / %(arg2)s)")
+mul = BinaryUfunc("(%(arg1)s * %(arg2)s)")
+sin = UnaryUfunc("sin(%(arg)s)", numpy.dtype(numpy.float64))
+square = UnaryUfunc("(%(arg)s * %(arg)s)")
+sqrt = UnaryUfunc("sqrt(%(arg)s)")
+def dot(a, b): return( sum(a*b, axis=0) )
+
+#===============================================================================
+class Slicing(ArrayExpression):
 	def __init__(self, arg, slices):
 		self.arg = assimilate(arg) #no copy - creates a view
-		print slices
-		assert(False)
-		# self.arg = arg # not incrementing refcount - it's only a view
-		# self.key = key
-		# self.shape = []
-		# for part in key:
-			# print dir(part)
-			# if(isinstance(part, slice)):
-				# if(part.start==None and part.start==None and part.start==None):
-					# self.shape.append(						
-				# 
-				# print part.indices()
-		# print key
-		# 
-
+		self.dtype = self.arg.dtype
+		if(not hasattr(slices, "__iter__")):
+			slices = (slices, )
+			
+		#replace first Ellipsis
+		for (i,s) in enumerate(slices):
+			if(s == Ellipsis):
+				c = __builtin__.sum(1 for x in slices if x not in (None, numpy.newaxis))
+				fill = (slice(None, None, None),) * (self.arg.ndim -c-i+1)
+				slices = slices[:i] + fill + slices[i+1:]
+				break
+				
+		#replace remaining Ellipsis
+		for (i,s) in enumerate(slices):
+			if(s == Ellipsis):
+				slices = slices[:i] +(slice(None, None, None),)  + slices[i+1:]
+		
+		j = 0 #points to dim in self.arg.shape which we need to consume next
+		out_shape = []
+		for s in slices:
+			if(s in (None, numpy.newaxis)):
+				out_shape.append(1)  	#not incrementing j
+			elif(isinstance(s, int)):
+				assert(abs(s) <= self.arg.shape[j])
+				j += 1
+			elif(isinstance(s, slice)):
+				(first, last, step) = s.indices(self.arg.shape[j])
+				out_shape.append(max(0, int((last - first)/step))) #TODO: correct?
+				j += 1
+			else:
+				raise(Exception("Strange slice: "+str(s)))
+				
+		out_shape += self.arg.shape[j:]
+		assert(all(s>=0 for s in out_shape))
+		self.shape = tuple(out_shape)
+		self.slices = tuple(slices)
+		
+	def mk_new_index(self, builder, index):
+		index = map(str, index)
+		assert(len(index) == len(self.shape))
+		argshape = self.arg.src.build_shape(builder)
+		new_index = []
+		j = 0 # were we are in index
+		for s in self.slices:
+			if(s in (None, numpy.newaxis)):
+				assert(index[j] == "0")
+				j += 1
+			elif(isinstance(s, int)):
+				foo = str(s)
+				if(s < 0):
+					foo += "+%s"%argshape[len(new_index)]
+				new_index.append(foo)
+			elif(isinstance(s, slice)):
+				start = str(s.start)
+				if(s.start==None):
+					start = '0'
+				elif(s.start < 0):	
+					start += "+%s"%argshape[len(new_index)]
+				step = s.step if(s.step!=None) else 1
+				new_index.append("(%s+%d*%s)"%(start, step, index[j]))
+				j += 1
+			else:
+				raise(Exception("Strange slice: "+str(s)))
+		
+		new_index += index[j:]
+		return(new_index)
+		
+		
+	def build_get(self, builder, index):
+		return self.arg.src.build_get(builder, self.mk_new_index(builder, index))
+	
+	def build_set(self, builder, index, value):
+		return self.arg.src.build_set(builder, self.mk_new_index(builder, index), value)
+		
 #===============================================================================
 class ravel(ArrayExpression):
 	""" Returns a flattened array. """
@@ -455,29 +622,68 @@ class ravel(ArrayExpression):
 		self.dtype = self.a.dtype
 		self.shape = (self.a.size,)
 		
-	def build_shape(self, builder):
-		return( ["*".join(self.a.src.build_shape(builder))] )
+	#def build_shape(self, builder):
+	#	return( ["*".join(self.a.src.build_shape(builder))] )
 	
-	def build(self, builder, index):
+	def build_get(self, builder, index):
 		new_index = [index[0] for i in self.a.shape]
 		for (i, n_uid) in enumerate( self.a.src.build_shape(builder) ):
 			for j in range(i,self.a.ndim):
 				new_index[j] += "%" if(i == j) else "/"
 				new_index[j] += n_uid					
-		return self.a.src.build(builder, new_index)
+		return self.a.src.build_get(builder, new_index)
 
-
+	def __str__(self):
+		return("ravel(%s)"%str(self.a))
 
 #===============================================================================
-#TODO: implement as ArrayExpression , see below
-@HandlefyDecorator
-def arange(*args): return(numpy.arange(*args))
+class zeros(ArrayExpression):
+	""" Returns a flattened array. """
+	def __init__(self, shape, dtype=numpy.dtype(numpy.float64)):
+		self.dtype = dtype
+		if(isinstance(shape, int)):
+			shape = (shape,)	
+		self.shape = shape
+		
+	def build_get(self, builder, index):
+		return "0"
 
-@HandlefyDecorator
-def zeros(*args): return(numpy.zeros(*args))
+	def __str__(self):
+		return("zeros(shape=%s)"%str(self.shape))
 
-@HandlefyDecorator
-def empty(*args): return(numpy.empty(*args))
+#===============================================================================
+
+# @AssimilateDecorator
+# def zeros(*args): 
+	# t1 = time()
+	# foo = numpy.zeros(*args)
+	# t2 = time()
+	# print "numpy.zeros took: "+str(t2-t1)
+	# return(foo)
+	
+
+@AssimilateDecorator
+def arange(*args): 
+	t1 = time()
+	foo = numpy.arange(*args)
+	t2 = time()
+	print "numpy.arange took: "+str(t2-t1)
+	return(foo)
+
+@AssimilateDecorator
+def empty(*args): 
+	#t1 = time()
+	foo = numpy.empty(*args)
+	#t2 = time()
+	#print "numpy.empty took: "+str(t2-t1)
+	return(foo)
+
+
+newaxis = numpy.newaxis
+#def zeros(*args): return(numpy.zeros(*args))
+
+#@AssimilateDecorator
+#def empty(*args): return(numpy.empty(*args))
 
 #===============================================================================
 # Produces: 
@@ -496,7 +702,6 @@ def empty(*args): return(numpy.empty(*args))
 		# return("0.0")
 
 #===============================================================================
-@HandlefyDecorator
 def sum(a, axis=None, dtype=None, out=None):
 	if(axis==None):
 		a = ravel(a) #let ravel to the assimilate
@@ -513,13 +718,11 @@ def sum(a, axis=None, dtype=None, out=None):
 		# ndarray.__init__(self, result.src) 
 	# 
 #===============================================================================
-@HandlefyDecorator
 def mean(a, axis=None, dtype=None, out=None):
 	b = sum(a, axis, dtype, out)
 	return(b / float(a.size / b.size))
 
 #===============================================================================
-@HandlefyDecorator
 def	average(a, axis=None, weights=None, returned=False):
 	if(weights != None):
 		a = a*weights
